@@ -337,7 +337,7 @@ Phone number: ${phoneNumber}`;
 }
 
 function serviceLinkPrompt() {
-  return "Please send the service link. Facebook Profile / Page / Post link or TikTok Account / Video link.";
+  return "Link လေးပို့ပေးပါ Facebook Profile / Page / Post link or TikTok Account / Video link.";
 }
 
 function phonePrompt() {
