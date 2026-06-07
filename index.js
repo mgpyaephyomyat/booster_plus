@@ -451,15 +451,16 @@ function formatOrderItems(items) {
     .join("\n");
 }
 
-function paymentText() {
+function paymentText(totalAmount) {
   return `💳 ငွေလွှဲရန်
 
-KBZPay
-09775936384
+💰 Amount: ${formatNumber(totalAmount)} Ks
 
-Pyae Phyo Myat
+🏦 KBZPay
+📱 09775936384
+👤 Pyae Phyo Myat
 
-💬 ငွေလွှဲပြီး Screenshot ပို့ပေးပါရှင့်။`;
+📸 ငွေလွှဲပြီး Screenshot ကို ဒီ chat ထဲ တိုက်ရိုက် Upload ပေးပါရှင့်။`;
 }
 
 async function saveConfirmedOrder(msg, session) {
@@ -473,7 +474,7 @@ async function saveConfirmedOrder(msg, session) {
     total_amount: orderTotal(session.items),
     service_link: session.serviceLink,
     phone_number: session.phoneNumber,
-    payment_photo_file_id: null
+    payment_screenshot_file_id: null
   };
 
   try {
@@ -570,7 +571,7 @@ async function notifyAdminPayment(order) {
 
   await sendPhoto(
     ADMIN_CHAT_ID,
-    order.payment_photo_file_id,
+    order.payment_screenshot_file_id,
     buildAdminPaymentCaption(order),
     adminPaymentButtons(order.id)
   );
@@ -594,14 +595,15 @@ async function handlePhoto(msg) {
 
   const submittedOrder = await updateOrder(waitingOrder.id, {
     status: "payment_submitted",
-    payment_photo_file_id: photo.file_id
+    payment_screenshot_file_id: photo.file_id
   });
 
   if (!submittedOrder) {
     return sendMessage(chatId, "Payment screenshot could not be saved. Please try again or contact admin.", mainButtons());
   }
 
-  await sendMessage(chatId, "Screenshot received. Admin will verify your payment soon.", mainButtons());
+  await sendMessage(chatId, `✅ Payment Screenshot လက်ခံရရှိပါပြီရှင့်။
+Admin မှ စစ်ဆေးပြီး Order စတင်ပေးပါမည်။`, mainButtons());
   await notifyAdminPayment(submittedOrder);
 }
 
@@ -625,7 +627,7 @@ async function handleConfirmOrder(callbackQuery) {
 
   await clearCustomerSession(userId);
   await answerCallbackQuery(callbackQuery.id, "Order confirmed.");
-  return sendMessage(chatId, paymentText(), mainButtons());
+  return sendMessage(chatId, paymentText(savedOrder.total_amount || 0), mainButtons());
 }
 
 async function handleCancelOrder(callbackQuery) {
@@ -802,6 +804,12 @@ async function handleText(msg) {
 
   if (session?.stage === "awaiting_confirmation") {
     return sendMessage(chatId, "Please confirm or cancel the order using the buttons.", orderActionButtons(session.tempOrderId));
+  }
+
+  const waitingPaymentOrder = await getWaitingPaymentOrder(msg.from.id);
+
+  if (waitingPaymentOrder) {
+    return sendMessage(chatId, "Payment proof အတွက် Screenshot photo ကို ဒီ chat ထဲ တိုက်ရိုက် Upload ပေးပါရှင့်။ Text message ကို payment proof အဖြစ် လက်မခံပါ။", mainButtons());
   }
 
   const order = parseOrderItems(text);
