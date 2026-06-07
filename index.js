@@ -18,7 +18,69 @@ if (!BOT_TOKEN) {
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const VERSION = "booster-plus-v3-contact-url";
+const VERSION = "booster-plus-v4-multi-cart";
+
+const SERVICE_PRICES = [
+  {
+    id: "facebook_followers",
+    platform: "facebook",
+    name: "Facebook Followers",
+    unitQuantity: 1000,
+    unitLabel: "1K",
+    unitPrice: 14000
+  },
+  {
+    id: "facebook_post_like",
+    platform: "facebook",
+    name: "Facebook Post Like",
+    unitQuantity: 100,
+    unitLabel: "100",
+    unitPrice: 2000
+  },
+  {
+    id: "facebook_post_like_myanmar",
+    platform: "facebook",
+    name: "Facebook Post Like Myanmar Names",
+    unitQuantity: 100,
+    unitLabel: "100",
+    unitPrice: 4000
+  },
+  {
+    id: "facebook_video_views",
+    platform: "facebook",
+    name: "Facebook Video Views",
+    unitQuantity: 1000,
+    unitLabel: "1K",
+    unitPrice: 4000
+  },
+  {
+    id: "tiktok_followers",
+    platform: "tiktok",
+    name: "TikTok Followers",
+    unitQuantity: 1000,
+    unitLabel: "1K",
+    unitPrice: 17000
+  },
+  {
+    id: "tiktok_likes",
+    platform: "tiktok",
+    name: "TikTok Likes",
+    unitQuantity: 1000,
+    unitLabel: "1K",
+    unitPrice: 9000
+  },
+  {
+    id: "tiktok_video_views",
+    platform: "tiktok",
+    name: "TikTok Video Views",
+    unitQuantity: 1000,
+    unitLabel: "1K",
+    unitPrice: 5000
+  }
+];
+
+const SERVICE_BY_ID = Object.fromEntries(SERVICE_PRICES.map((service) => [service.id, service]));
+const BURMESE_WITH = "\u1014\u1032\u1037";
 
 const welcomeText = `မင်္ဂလာပါရှင့် 🙏
 Booster Plus မှ ကြိုဆိုပါတယ် 🚀
@@ -82,6 +144,150 @@ async function sendMessage(chatId, text, buttons = null) {
   } catch (err) {
     console.error("Telegram sendMessage error:", err.response?.data || err.message);
   }
+}
+
+function normalizeOrderText(text) {
+  return text
+    .toLowerCase()
+    .replace(/\u00a0/g, " ")
+    .replace(/[()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasPlatform(text) {
+  return /\b(facebook|face\s*book|fb)\b/.test(text) || /\b(tiktok|tik\s*tok|tt)\b/.test(text);
+}
+
+function hasServiceKeyword(text) {
+  return /\b(followers?|likes?|views?|post|video|myanmar|names?)\b/.test(text);
+}
+
+function detectPlatform(text, fallback = null) {
+  if (/\b(facebook|face\s*book|fb)\b/.test(text)) return "facebook";
+  if (/\b(tiktok|tik\s*tok|tt)\b/.test(text)) return "tiktok";
+  return fallback;
+}
+
+function detectServiceId(text, platform) {
+  const hasFollowers = /\bfollowers?\b/.test(text);
+  const hasLikes = /\blikes?\b/.test(text);
+  const hasViews = /\bviews?\b/.test(text);
+  const hasMyanmarNames = /\bmyanmar\b/.test(text) && /\bnames?\b/.test(text);
+
+  if (platform === "facebook") {
+    if (hasFollowers) return "facebook_followers";
+    if (hasLikes && hasMyanmarNames) return "facebook_post_like_myanmar";
+    if (hasLikes) return "facebook_post_like";
+    if (hasViews) return "facebook_video_views";
+  }
+
+  if (platform === "tiktok") {
+    if (hasFollowers) return "tiktok_followers";
+    if (hasLikes) return "tiktok_likes";
+    if (hasViews) return "tiktok_video_views";
+  }
+
+  return null;
+}
+
+function parseQuantity(text) {
+  const quantityMatch = text.match(/\b(\d{1,3}(?:,\d{3})+|\d+(?:[.,]\d+)?)\s*(k)?\b/i);
+  if (!quantityMatch) return null;
+
+  let numberText = quantityMatch[1];
+  if (/^\d{1,3}(,\d{3})+$/.test(numberText)) {
+    numberText = numberText.replace(/,/g, "");
+  } else {
+    numberText = numberText.replace(",", ".");
+  }
+
+  const value = Number.parseFloat(numberText);
+  if (!Number.isFinite(value) || value <= 0) return null;
+
+  return Math.round(value * (quantityMatch[2] ? 1000 : 1));
+}
+
+function calculatePrice(service, quantity) {
+  return Math.round((quantity / service.unitQuantity) * service.unitPrice);
+}
+
+function splitOrderClauses(text) {
+  const connectorPattern = new RegExp(`\\s+and\\s+|\\s*${BURMESE_WITH}\\s*|\\s*[&+]\\s*|\\s*;\\s*`, "i");
+  return text.split(connectorPattern).map((part) => part.trim()).filter(Boolean);
+}
+
+function parseOrderItems(userText) {
+  const normalized = normalizeOrderText(userText);
+  const clauses = splitOrderClauses(normalized);
+  const hasQuantity = parseQuantity(normalized) !== null;
+  const orderLike = (hasServiceKeyword(normalized) && (hasPlatform(normalized) || hasQuantity)) || (hasPlatform(normalized) && hasQuantity);
+  const items = [];
+  let unclear = false;
+  let lastPlatform = null;
+
+  for (const clause of clauses) {
+    const platform = detectPlatform(clause, lastPlatform);
+    const quantity = parseQuantity(clause);
+    const serviceId = platform ? detectServiceId(clause, platform) : null;
+    const clauseLooksLikeOrder = hasServiceKeyword(clause) || hasPlatform(clause) || quantity;
+
+    if (serviceId && quantity) {
+      const service = SERVICE_BY_ID[serviceId];
+      items.push({
+        service,
+        quantity,
+        price: calculatePrice(service, quantity)
+      });
+      lastPlatform = platform;
+      continue;
+    }
+
+    if (clauseLooksLikeOrder && orderLike) {
+      unclear = true;
+    }
+
+    if (platform) {
+      lastPlatform = platform;
+    }
+  }
+
+  return {
+    items,
+    isOrderLike: orderLike || items.length > 0,
+    unclear: unclear || (orderLike && items.length === 0)
+  };
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatQuantity(quantity) {
+  if (quantity >= 1000 && quantity % 1000 === 0) {
+    return `${formatNumber(quantity / 1000)}K`;
+  }
+
+  if (quantity > 1000) {
+    const kValue = quantity / 1000;
+    return `${formatNumber(Number(kValue.toFixed(2)))}K`;
+  }
+
+  return formatNumber(quantity);
+}
+
+function buildOrderSummary(items) {
+  const lines = items.map((item, index) => {
+    const unitPrice = `${formatNumber(item.service.unitPrice)} Ks / ${item.service.unitLabel}`;
+    return `${index + 1}. ${item.service.name} - ${formatQuantity(item.quantity)} (${unitPrice}) = ${formatNumber(item.price)} Ks`;
+  });
+  const total = items.reduce((sum, item) => sum + item.price, 0);
+
+  return `Order Summary\n\n${lines.join("\n")}\n\nTotal Price: ${formatNumber(total)} Ks`;
+}
+
+function unclearOrderText() {
+  return "Order message is unclear. Please choose the service and quantity again, for example: TikTok followers 1K and TikTok likes 2K.";
 }
 
 async function saveCustomer(msg) {
@@ -164,6 +370,16 @@ async function handleText(msg) {
 
   if (["/start", "hi", "hello", "hey", "မင်္ဂလာပါ"].includes(text)) {
     return sendMessage(chatId, welcomeText, mainButtons());
+  }
+
+  const order = parseOrderItems(text);
+
+  if (order.unclear) {
+    return sendMessage(chatId, unclearOrderText(), mainButtons());
+  }
+
+  if (order.items.length > 0) {
+    return sendMessage(chatId, buildOrderSummary(order.items), mainButtons());
   }
 
   if (text.includes("facebook") || text.includes("fb") || text.includes("ဖေ့")) {
