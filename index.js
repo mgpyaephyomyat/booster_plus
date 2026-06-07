@@ -323,7 +323,16 @@ function buildOrderSummary(items) {
   });
   const total = items.reduce((sum, item) => sum + item.price, 0);
 
-  return `Order Summary\n\n${lines.join("\n")}\n\nTotal Price: ${formatNumber(total)} Ks`;
+  return `🧾 Order Summary
+
+${lines.join("\n")}
+
+💰 Total Price: ${formatNumber(total)} Ks
+
+🔗 Service Link လေးပို့ထားပေးပါရှင့်။
+( Facebook Profile / Page / Post Link သို့မဟုတ် TikTok Account / Video Link )
+
+📱 ဖုန်းနံပါတ်လေးလည်း ပေးထားပေးပါရှင့်။`;
 }
 
 function unclearOrderText() {
