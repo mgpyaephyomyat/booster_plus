@@ -1,7 +1,6 @@
 import express from "express";
 import axios from "axios";
 import { createClient } from "@supabase/supabase-js";
-import { randomUUID } from "node:crypto";
 
 const app = express();
 app.use(express.json());
@@ -372,7 +371,6 @@ Pyae Phyo Myat
 async function createPendingOrder(msg, items) {
   const user = msg.from;
   const order = {
-    id: randomUUID(),
     telegram_id: user.id,
     username: user.username || null,
     first_name: user.first_name || null,
