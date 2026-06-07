@@ -1,6 +1,7 @@
 import express from "express";
 import axios from "axios";
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
 
 const app = express();
 app.use(express.json());
@@ -19,7 +20,7 @@ if (!BOT_TOKEN) {
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const VERSION = "booster-plus-v5-payment-flow";
+const VERSION = "booster-plus-v7-supabase-sessions";
 
 const SERVICE_PRICES = [
   {
@@ -316,27 +317,111 @@ function formatQuantity(quantity) {
   return formatNumber(quantity);
 }
 
-function buildOrderSummary(items) {
+function buildOrderSummary(items, serviceLink, phoneNumber) {
   const lines = items.map((item, index) => {
     const unitPrice = `${formatNumber(item.service.unitPrice)} Ks / ${item.service.unitLabel}`;
     return `${index + 1}. ${item.service.name} - ${formatQuantity(item.quantity)} (${unitPrice}) = ${formatNumber(item.price)} Ks`;
   });
   const total = items.reduce((sum, item) => sum + item.price, 0);
 
-  return `🧾 Order Summary
+  return `Order Summary
 
 ${lines.join("\n")}
 
-💰 Total Price: ${formatNumber(total)} Ks
+Total Price: ${formatNumber(total)} Ks
 
-🔗 Service Link လေးပို့ထားပေးပါရှင့်။
-( Facebook Profile / Page / Post Link သို့မဟုတ် TikTok Account / Video Link )
+Link: ${serviceLink}
+Phone number: ${phoneNumber}`;
+}
 
-📱 ဖုန်းနံပါတ်လေးလည်း ပေးထားပေးပါရှင့်။`;
+function serviceLinkPrompt() {
+  return "Please send the service link. Facebook Profile / Page / Post link or TikTok Account / Video link.";
+}
+
+function phonePrompt() {
+  return "Please send your phone number.";
 }
 
 function unclearOrderText() {
   return "Order message is unclear. Please choose the service and quantity again, for example: TikTok followers 1K and TikTok likes 2K.";
+}
+
+function sessionKeyFromUserId(userId) {
+  return String(userId);
+}
+
+async function getCustomerSession(userId) {
+  try {
+    const { data, error } = await supabase
+      .from("customer_sessions")
+      .select("session_data")
+      .eq("telegram_id", sessionKeyFromUserId(userId))
+      .maybeSingle();
+
+    if (error) {
+      console.error("Supabase getCustomerSession error:", error);
+      return null;
+    }
+
+    return data?.session_data || null;
+  } catch (err) {
+    console.error("getCustomerSession crash:", err.message);
+    return null;
+  }
+}
+
+async function setCustomerSession(userId, session) {
+  try {
+    const { error } = await supabase.from("customer_sessions").upsert(
+      {
+        telegram_id: sessionKeyFromUserId(userId),
+        session_data: session,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: "telegram_id" }
+    );
+
+    if (error) {
+      console.error("Supabase setCustomerSession error:", error);
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.error("setCustomerSession crash:", err.message);
+    return false;
+  }
+}
+
+async function clearCustomerSession(userId) {
+  try {
+    const { error } = await supabase
+      .from("customer_sessions")
+      .delete()
+      .eq("telegram_id", sessionKeyFromUserId(userId));
+
+    if (error) {
+      console.error("Supabase clearCustomerSession error:", error);
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.error("clearCustomerSession crash:", err.message);
+    return false;
+  }
+}
+
+function isLikelyServiceLink(text) {
+  const value = text.trim();
+  if (value.length < 3) return false;
+  if (/^\+?\d[\d\s-]{5,}$/.test(value)) return false;
+  return /https?:\/\/|www\.|facebook\.com|fb\.com|tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com|\/|@/i.test(value);
+}
+
+function isLikelyPhoneNumber(text) {
+  const digitCount = (text.match(/\d/g) || []).length;
+  return digitCount >= 6 && digitCount <= 15;
 }
 
 function serializeOrderItems(items) {
@@ -377,28 +462,30 @@ Pyae Phyo Myat
 💬 ငွေလွှဲပြီး Screenshot ပို့ပေးပါရှင့်။`;
 }
 
-async function createPendingOrder(msg, items) {
+async function saveConfirmedOrder(msg, session) {
   const user = msg.from;
   const order = {
     telegram_id: user.id,
     username: user.username || null,
     first_name: user.first_name || null,
-    status: "pending_confirmation",
-    items: serializeOrderItems(items),
-    total_amount: orderTotal(items),
+    status: "waiting_payment",
+    items: serializeOrderItems(session.items),
+    total_amount: orderTotal(session.items),
+    service_link: session.serviceLink,
+    phone_number: session.phoneNumber,
     payment_photo_file_id: null
   };
 
   try {
     const { data, error } = await supabase.from("orders").insert(order).select().single();
     if (error) {
-      console.error("Supabase createPendingOrder error:", error);
+      console.error("Supabase saveConfirmedOrder error:", error);
       return null;
     }
 
     return data;
   } catch (err) {
-    console.error("createPendingOrder crash:", err.message);
+    console.error("saveConfirmedOrder crash:", err.message);
     return null;
   }
 }
@@ -470,7 +557,9 @@ Telegram ID: ${order.telegram_id}
 Ordered services:
 ${services}
 
-Total amount: ${formatNumber(order.total_amount || 0)} Ks`;
+Total amount: ${formatNumber(order.total_amount || 0)} Ks
+Link: ${order.service_link || "-"}
+Phone number: ${order.phone_number || "-"}`;
 }
 
 async function notifyAdminPayment(order) {
@@ -519,26 +608,22 @@ async function handlePhoto(msg) {
 async function handleConfirmOrder(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
   const userId = callbackQuery.from.id;
-  const orderId = callbackQuery.data.split(":")[1];
-  const order = await getOrder(orderId);
+  const tempOrderId = callbackQuery.data.split(":")[1];
+  const session = await getCustomerSession(userId);
 
-  if (!order || String(order.telegram_id) !== String(userId)) {
-    await answerCallbackQuery(callbackQuery.id, "Order not found.");
-    return sendMessage(chatId, "Order not found. Please send your order again.", mainButtons());
+  if (!session || session.stage !== "awaiting_confirmation" || session.tempOrderId !== tempOrderId) {
+    await answerCallbackQuery(callbackQuery.id, "Order session expired.");
+    return sendMessage(chatId, "Order session expired. Please send your order again.", mainButtons());
   }
 
-  if (order.status !== "pending_confirmation") {
-    await answerCallbackQuery(callbackQuery.id, "Order already handled.");
-    return sendMessage(chatId, "This order was already handled.", mainButtons());
-  }
+  const savedOrder = await saveConfirmedOrder({ from: callbackQuery.from }, session);
 
-  const updatedOrder = await updateOrder(orderId, { status: "waiting_payment" });
-
-  if (!updatedOrder) {
+  if (!savedOrder) {
     await answerCallbackQuery(callbackQuery.id, "Could not confirm order.");
     return sendMessage(chatId, "Order could not be confirmed. Please try again.", mainButtons());
   }
 
+  await clearCustomerSession(userId);
   await answerCallbackQuery(callbackQuery.id, "Order confirmed.");
   return sendMessage(chatId, paymentText(), mainButtons());
 }
@@ -546,24 +631,11 @@ async function handleConfirmOrder(callbackQuery) {
 async function handleCancelOrder(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
   const userId = callbackQuery.from.id;
-  const orderId = callbackQuery.data.split(":")[1];
-  const order = await getOrder(orderId);
+  const tempOrderId = callbackQuery.data.split(":")[1];
+  const session = await getCustomerSession(userId);
 
-  if (!order || String(order.telegram_id) !== String(userId)) {
-    await answerCallbackQuery(callbackQuery.id, "Order not found.");
-    return sendMessage(chatId, "Order not found. Please send your order again.", mainButtons());
-  }
-
-  if (order.status !== "pending_confirmation") {
-    await answerCallbackQuery(callbackQuery.id, "Order already handled.");
-    return sendMessage(chatId, "This order was already handled.", mainButtons());
-  }
-
-  const updatedOrder = await updateOrder(orderId, { status: "cancelled" });
-
-  if (!updatedOrder) {
-    await answerCallbackQuery(callbackQuery.id, "Could not cancel order.");
-    return sendMessage(chatId, "Order could not be cancelled. Please try again.", mainButtons());
+  if (session?.tempOrderId === tempOrderId) {
+    await clearCustomerSession(userId);
   }
 
   await answerCallbackQuery(callbackQuery.id, "Order cancelled.");
@@ -683,12 +755,53 @@ Other => unknown.`
 
 async function handleText(msg) {
   const chatId = msg.chat.id;
-  const text = msg.text?.toLowerCase().trim() || "";
+  const rawText = msg.text?.trim() || "";
+  const text = rawText.toLowerCase();
 
   await saveCustomer(msg);
 
   if (["/start", "hi", "hello", "hey", "မင်္ဂလာပါ"].includes(text)) {
+    await clearCustomerSession(msg.from.id);
     return sendMessage(chatId, welcomeText, mainButtons());
+  }
+
+  const session = await getCustomerSession(msg.from.id);
+
+  if (session?.stage === "awaiting_link") {
+    if (!isLikelyServiceLink(rawText)) {
+      return sendMessage(chatId, serviceLinkPrompt(), mainButtons());
+    }
+
+    session.serviceLink = rawText;
+    session.stage = "awaiting_phone";
+    if (!(await setCustomerSession(msg.from.id, session))) {
+      return sendMessage(chatId, "Could not save your order session. Please try again.", mainButtons());
+    }
+
+    return sendMessage(chatId, phonePrompt(), mainButtons());
+  }
+
+  if (session?.stage === "awaiting_phone") {
+    if (!isLikelyPhoneNumber(rawText)) {
+      return sendMessage(chatId, phonePrompt(), mainButtons());
+    }
+
+    session.phoneNumber = rawText;
+    session.stage = "awaiting_confirmation";
+    session.tempOrderId = randomUUID();
+    if (!(await setCustomerSession(msg.from.id, session))) {
+      return sendMessage(chatId, "Could not save your order session. Please try again.", mainButtons());
+    }
+
+    return sendMessage(
+      chatId,
+      buildOrderSummary(session.items, session.serviceLink, session.phoneNumber),
+      orderActionButtons(session.tempOrderId)
+    );
+  }
+
+  if (session?.stage === "awaiting_confirmation") {
+    return sendMessage(chatId, "Please confirm or cancel the order using the buttons.", orderActionButtons(session.tempOrderId));
   }
 
   const order = parseOrderItems(text);
@@ -698,13 +811,16 @@ async function handleText(msg) {
   }
 
   if (order.items.length > 0) {
-    const pendingOrder = await createPendingOrder(msg, order.items);
+    const savedSession = await setCustomerSession(msg.from.id, {
+      stage: "awaiting_link",
+      items: order.items
+    });
 
-    if (!pendingOrder) {
-      return sendMessage(chatId, "Order could not be saved right now. Please try again or contact admin.", mainButtons());
+    if (!savedSession) {
+      return sendMessage(chatId, "Could not save your order session. Please try again.", mainButtons());
     }
 
-    return sendMessage(chatId, buildOrderSummary(order.items), orderActionButtons(pendingOrder.id));
+    return sendMessage(chatId, serviceLinkPrompt(), mainButtons());
   }
 
   if (text.includes("facebook") || text.includes("fb") || text.includes("ဖေ့")) {
