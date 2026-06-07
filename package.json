@@ -1,0 +1,14 @@
+{
+  "name": "booster-plus-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "axios": "^1.7.7",
+    "express": "^4.21.1"
+  }
+}
