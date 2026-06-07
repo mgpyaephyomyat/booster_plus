@@ -18,6 +18,8 @@ if (!BOT_TOKEN) {
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+const VERSION = "booster-plus-v3-contact-url";
+
 const welcomeText = `မင်္ဂလာပါရှင့် 🙏
 Booster Plus မှ ကြိုဆိုပါတယ် 🚀
 
@@ -220,15 +222,16 @@ app.post("/webhook", async (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("Booster Plus Bot is running.");
+  res.send(`Booster Plus Bot is running. ${VERSION}`);
 });
 
 app.get("/health", (req, res) => {
-  res.send("OK");
+  res.send(`OK - ${VERSION}`);
 });
 
 const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () => {
   console.log(`Booster Plus Bot running on port ${PORT}`);
+  console.log(`Running version: ${VERSION}`);
 });
