@@ -190,6 +190,7 @@ async function answerCallbackQuery(callbackQueryId, text = null) {
 function normalizeOrderText(text) {
   return text
     .toLowerCase()
+    .replace(/\u1012\u102e\u101c\u102d\u102f\u1019\u103b\u102d\u102f\u1038/g, " ")
     .replace(/\u00a0/g, " ")
     .replace(/[()]/g, " ")
     .replace(/\s+/g, " ")
@@ -201,7 +202,7 @@ function hasPlatform(text) {
 }
 
 function hasServiceKeyword(text) {
-  return /\b(followers?|likes?|views?|post|video|myanmar|names?)\b/.test(text);
+  return /\b(followers?|likes?|reacts?|reactions?|views?|post|video|myanmar|names?)\b/.test(text);
 }
 
 function detectPlatform(text, fallback = null) {
@@ -213,13 +214,14 @@ function detectPlatform(text, fallback = null) {
 function detectServiceId(text, platform) {
   const hasFollowers = /\bfollowers?\b/.test(text);
   const hasLikes = /\blikes?\b/.test(text);
+  const hasReact = /\b(reacts?|reactions?)\b/.test(text);
   const hasViews = /\bviews?\b/.test(text);
   const hasMyanmarNames = /\bmyanmar\b/.test(text) && /\bnames?\b/.test(text);
 
   if (platform === "facebook") {
     if (hasFollowers) return "facebook_followers";
     if (hasLikes && hasMyanmarNames) return "facebook_post_like_myanmar";
-    if (hasLikes) return "facebook_post_like";
+    if (hasLikes || hasReact) return "facebook_post_like";
     if (hasViews) return "facebook_video_views";
   }
 
@@ -422,6 +424,10 @@ function isLikelyServiceLink(text) {
 function isLikelyPhoneNumber(text) {
   const digitCount = (text.match(/\d/g) || []).length;
   return digitCount >= 6 && digitCount <= 15;
+}
+
+function isAdminRequest(text) {
+  return /\b(admin|contact|human|support|help)\b/.test(text);
 }
 
 function serializeOrderItems(items) {
@@ -806,12 +812,6 @@ async function handleText(msg) {
     return sendMessage(chatId, "Please confirm or cancel the order using the buttons.", orderActionButtons(session.tempOrderId));
   }
 
-  const waitingPaymentOrder = await getWaitingPaymentOrder(msg.from.id);
-
-  if (waitingPaymentOrder) {
-    return sendMessage(chatId, "Payment proof အတွက် Screenshot photo ကို ဒီ chat ထဲ တိုက်ရိုက် Upload ပေးပါရှင့်။ Text message ကို payment proof အဖြစ် လက်မခံပါ။", mainButtons());
-  }
-
   const order = parseOrderItems(text);
 
   if (order.unclear) {
@@ -839,6 +839,10 @@ async function handleText(msg) {
     return sendMessage(chatId, SERVICES.tiktok, mainButtons());
   }
 
+  if (isAdminRequest(text)) {
+    return sendMessage(chatId, "📞 Admin ကို ဆက်သွယ်ရန် အောက်က Contact Admin ခလုတ်ကို နှိပ်ပေးပါရှင့်။", mainButtons());
+  }
+
   const intent = await askAI(text);
 
   if (intent === "facebook") return sendMessage(chatId, SERVICES.facebook, mainButtons());
@@ -854,6 +858,12 @@ async function handleText(msg) {
 
   if (intent === "admin") {
     return sendMessage(chatId, "📞 Admin ကို ဆက်သွယ်ရန် အောက်က Contact Admin ခလုတ်ကို နှိပ်ပေးပါရှင့်။", mainButtons());
+  }
+
+  const waitingPaymentOrder = await getWaitingPaymentOrder(msg.from.id);
+
+  if (waitingPaymentOrder) {
+    return sendMessage(chatId, "Payment proof အတွက် Screenshot photo ကို ဒီ chat ထဲ တိုက်ရိုက် Upload ပေးပါရှင့်။ Text message ကို payment proof အဖြစ် လက်မခံပါ။", mainButtons());
   }
 
   return sendMessage(chatId, "နားမလည်သေးပါရှင့်။ Facebook Service လား TikTok Service လား ရွေးပေးပါနော် 💙", mainButtons());
