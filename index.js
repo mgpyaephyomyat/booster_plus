@@ -1,6 +1,7 @@
 import express from "express";
 import axios from "axios";
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
 
 const app = express();
 app.use(express.json());
@@ -10,6 +11,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const AI_MODEL = process.env.AI_MODEL || "openai/gpt-4o-mini";
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 
 if (!BOT_TOKEN) {
   throw new Error("BOT_TOKEN is missing in Render Environment Variables");
@@ -18,7 +20,7 @@ if (!BOT_TOKEN) {
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const VERSION = "booster-plus-v4-multi-cart";
+const VERSION = "booster-plus-v5-payment-flow";
 
 const SERVICE_PRICES = [
   {
@@ -132,6 +134,20 @@ function mainButtons() {
   ];
 }
 
+function orderActionButtons(orderId) {
+  return [
+    [{ text: "✅ Confirm Order", callback_data: `confirm_order:${orderId}` }],
+    [{ text: "❌ Cancel Order", callback_data: `cancel_order:${orderId}` }]
+  ];
+}
+
+function adminPaymentButtons(orderId) {
+  return [
+    [{ text: "✅ Payment Verified", callback_data: `payment_verified:${orderId}` }],
+    [{ text: "❌ Reject Payment", callback_data: `reject_payment:${orderId}` }]
+  ];
+}
+
 async function sendMessage(chatId, text, buttons = null) {
   const payload = { chat_id: chatId, text };
 
@@ -143,6 +159,31 @@ async function sendMessage(chatId, text, buttons = null) {
     await axios.post(`${TELEGRAM_API}/sendMessage`, payload);
   } catch (err) {
     console.error("Telegram sendMessage error:", err.response?.data || err.message);
+  }
+}
+
+async function sendPhoto(chatId, photo, caption, buttons = null) {
+  const payload = { chat_id: chatId, photo, caption };
+
+  if (buttons) {
+    payload.reply_markup = { inline_keyboard: buttons };
+  }
+
+  try {
+    await axios.post(`${TELEGRAM_API}/sendPhoto`, payload);
+  } catch (err) {
+    console.error("Telegram sendPhoto error:", err.response?.data || err.message);
+  }
+}
+
+async function answerCallbackQuery(callbackQueryId, text = null) {
+  const payload = { callback_query_id: callbackQueryId };
+  if (text) payload.text = text;
+
+  try {
+    await axios.post(`${TELEGRAM_API}/answerCallbackQuery`, payload);
+  } catch (err) {
+    console.error("Telegram answerCallbackQuery error:", err.response?.data || err.message);
   }
 }
 
@@ -290,6 +331,277 @@ function unclearOrderText() {
   return "Order message is unclear. Please choose the service and quantity again, for example: TikTok followers 1K and TikTok likes 2K.";
 }
 
+function serializeOrderItems(items) {
+  return items.map((item) => ({
+    service_id: item.service.id,
+    service_name: item.service.name,
+    quantity: item.quantity,
+    quantity_label: formatQuantity(item.quantity),
+    unit_label: item.service.unitLabel,
+    unit_price: item.service.unitPrice,
+    price: item.price
+  }));
+}
+
+function orderTotal(items) {
+  return items.reduce((sum, item) => sum + item.price, 0);
+}
+
+function formatOrderItems(items) {
+  return items
+    .map((item, index) => {
+      const name = item.service_name || item.service?.name || "Service";
+      const quantity = item.quantity_label || formatQuantity(item.quantity || 0);
+      const price = formatNumber(item.price || 0);
+      return `${index + 1}. ${name} - ${quantity} = ${price} Ks`;
+    })
+    .join("\n");
+}
+
+function paymentText() {
+  return `💳 ငွေလွှဲရန်
+
+KBZPay
+09775936384
+
+Pyae Phyo Myat
+
+💬 ငွေလွှဲပြီး Screenshot ပို့ပေးပါရှင့်။`;
+}
+
+async function createPendingOrder(msg, items) {
+  const user = msg.from;
+  const order = {
+    id: randomUUID(),
+    telegram_id: user.id,
+    username: user.username || null,
+    first_name: user.first_name || null,
+    status: "pending_confirmation",
+    items: serializeOrderItems(items),
+    total_amount: orderTotal(items),
+    payment_photo_file_id: null
+  };
+
+  try {
+    const { data, error } = await supabase.from("orders").insert(order).select().single();
+    if (error) {
+      console.error("Supabase createPendingOrder error:", error);
+      return null;
+    }
+
+    return data;
+  } catch (err) {
+    console.error("createPendingOrder crash:", err.message);
+    return null;
+  }
+}
+
+async function getOrder(orderId) {
+  try {
+    const { data, error } = await supabase.from("orders").select("*").eq("id", orderId).maybeSingle();
+    if (error) {
+      console.error("Supabase getOrder error:", error);
+      return null;
+    }
+
+    return data;
+  } catch (err) {
+    console.error("getOrder crash:", err.message);
+    return null;
+  }
+}
+
+async function updateOrder(orderId, fields) {
+  try {
+    const { data, error } = await supabase.from("orders").update(fields).eq("id", orderId).select().single();
+    if (error) {
+      console.error("Supabase updateOrder error:", error);
+      return null;
+    }
+
+    return data;
+  } catch (err) {
+    console.error("updateOrder crash:", err.message);
+    return null;
+  }
+}
+
+async function getWaitingPaymentOrder(telegramId) {
+  try {
+    const { data, error } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("telegram_id", telegramId)
+      .eq("status", "waiting_payment")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Supabase getWaitingPaymentOrder error:", error);
+      return null;
+    }
+
+    return data;
+  } catch (err) {
+    console.error("getWaitingPaymentOrder crash:", err.message);
+    return null;
+  }
+}
+
+function buildAdminPaymentCaption(order) {
+  const customerName = order.first_name || "-";
+  const username = order.username ? `@${order.username}` : "-";
+  const services = formatOrderItems(order.items || []);
+
+  return `Payment Submitted
+
+Customer name: ${customerName}
+Telegram username: ${username}
+Telegram ID: ${order.telegram_id}
+
+Ordered services:
+${services}
+
+Total amount: ${formatNumber(order.total_amount || 0)} Ks`;
+}
+
+async function notifyAdminPayment(order) {
+  if (!ADMIN_CHAT_ID) {
+    console.error("ADMIN_CHAT_ID is missing; cannot notify admin about payment.");
+    return;
+  }
+
+  await sendPhoto(
+    ADMIN_CHAT_ID,
+    order.payment_photo_file_id,
+    buildAdminPaymentCaption(order),
+    adminPaymentButtons(order.id)
+  );
+}
+
+async function handlePhoto(msg) {
+  const chatId = msg.chat.id;
+  await saveCustomer(msg);
+
+  const waitingOrder = await getWaitingPaymentOrder(msg.from.id);
+
+  if (!waitingOrder) {
+    return sendMessage(chatId, "Please confirm an order first, then send the payment screenshot.", mainButtons());
+  }
+
+  const photo = msg.photo?.[msg.photo.length - 1];
+
+  if (!photo?.file_id) {
+    return sendMessage(chatId, "Screenshot photo could not be read. Please send it again.", mainButtons());
+  }
+
+  const submittedOrder = await updateOrder(waitingOrder.id, {
+    status: "payment_submitted",
+    payment_photo_file_id: photo.file_id
+  });
+
+  if (!submittedOrder) {
+    return sendMessage(chatId, "Payment screenshot could not be saved. Please try again or contact admin.", mainButtons());
+  }
+
+  await sendMessage(chatId, "Screenshot received. Admin will verify your payment soon.", mainButtons());
+  await notifyAdminPayment(submittedOrder);
+}
+
+async function handleConfirmOrder(callbackQuery) {
+  const chatId = callbackQuery.message.chat.id;
+  const userId = callbackQuery.from.id;
+  const orderId = callbackQuery.data.split(":")[1];
+  const order = await getOrder(orderId);
+
+  if (!order || String(order.telegram_id) !== String(userId)) {
+    await answerCallbackQuery(callbackQuery.id, "Order not found.");
+    return sendMessage(chatId, "Order not found. Please send your order again.", mainButtons());
+  }
+
+  if (order.status !== "pending_confirmation") {
+    await answerCallbackQuery(callbackQuery.id, "Order already handled.");
+    return sendMessage(chatId, "This order was already handled.", mainButtons());
+  }
+
+  const updatedOrder = await updateOrder(orderId, { status: "waiting_payment" });
+
+  if (!updatedOrder) {
+    await answerCallbackQuery(callbackQuery.id, "Could not confirm order.");
+    return sendMessage(chatId, "Order could not be confirmed. Please try again.", mainButtons());
+  }
+
+  await answerCallbackQuery(callbackQuery.id, "Order confirmed.");
+  return sendMessage(chatId, paymentText(), mainButtons());
+}
+
+async function handleCancelOrder(callbackQuery) {
+  const chatId = callbackQuery.message.chat.id;
+  const userId = callbackQuery.from.id;
+  const orderId = callbackQuery.data.split(":")[1];
+  const order = await getOrder(orderId);
+
+  if (!order || String(order.telegram_id) !== String(userId)) {
+    await answerCallbackQuery(callbackQuery.id, "Order not found.");
+    return sendMessage(chatId, "Order not found. Please send your order again.", mainButtons());
+  }
+
+  if (order.status !== "pending_confirmation") {
+    await answerCallbackQuery(callbackQuery.id, "Order already handled.");
+    return sendMessage(chatId, "This order was already handled.", mainButtons());
+  }
+
+  const updatedOrder = await updateOrder(orderId, { status: "cancelled" });
+
+  if (!updatedOrder) {
+    await answerCallbackQuery(callbackQuery.id, "Could not cancel order.");
+    return sendMessage(chatId, "Order could not be cancelled. Please try again.", mainButtons());
+  }
+
+  await answerCallbackQuery(callbackQuery.id, "Order cancelled.");
+  return sendMessage(chatId, "Order cancelled.", mainButtons());
+}
+
+async function handleAdminPaymentDecision(callbackQuery, nextStatus) {
+  const adminChatId = callbackQuery.message.chat.id;
+  const orderId = callbackQuery.data.split(":")[1];
+
+  if (!ADMIN_CHAT_ID || String(adminChatId) !== String(ADMIN_CHAT_ID)) {
+    await answerCallbackQuery(callbackQuery.id, "Admin only.");
+    return;
+  }
+
+  const order = await getOrder(orderId);
+
+  if (!order) {
+    await answerCallbackQuery(callbackQuery.id, "Order not found.");
+    return sendMessage(adminChatId, "Order not found.");
+  }
+
+  if (order.status !== "payment_submitted") {
+    await answerCallbackQuery(callbackQuery.id, "Payment already handled.");
+    return sendMessage(adminChatId, `Payment already handled. Current status: ${order.status}`);
+  }
+
+  const updatedOrder = await updateOrder(orderId, { status: nextStatus });
+
+  if (!updatedOrder) {
+    await answerCallbackQuery(callbackQuery.id, "Could not update order.");
+    return sendMessage(adminChatId, "Order status could not be updated.");
+  }
+
+  if (nextStatus === "payment_verified") {
+    await sendMessage(order.telegram_id, "✅ Payment verified. Your order is now processing.", mainButtons());
+    await answerCallbackQuery(callbackQuery.id, "Payment verified.");
+    return sendMessage(adminChatId, "Payment verified and customer notified.");
+  }
+
+  await sendMessage(order.telegram_id, "❌ Payment rejected. Please contact admin.", mainButtons());
+  await answerCallbackQuery(callbackQuery.id, "Payment rejected.");
+  return sendMessage(adminChatId, "Payment rejected and customer notified.");
+}
+
 async function saveCustomer(msg) {
   try {
     const user = msg.from;
@@ -379,7 +691,13 @@ async function handleText(msg) {
   }
 
   if (order.items.length > 0) {
-    return sendMessage(chatId, buildOrderSummary(order.items), mainButtons());
+    const pendingOrder = await createPendingOrder(msg, order.items);
+
+    if (!pendingOrder) {
+      return sendMessage(chatId, "Order could not be saved right now. Please try again or contact admin.", mainButtons());
+    }
+
+    return sendMessage(chatId, buildOrderSummary(order.items), orderActionButtons(pendingOrder.id));
   }
 
   if (text.includes("facebook") || text.includes("fb") || text.includes("ဖေ့")) {
@@ -416,19 +734,46 @@ app.post("/webhook", async (req, res) => {
   try {
     const update = req.body;
 
+    if (update.message?.photo) {
+      await handlePhoto(update.message);
+      return;
+    }
+
     if (update.message) {
       await handleText(update.message);
     }
 
     if (update.callback_query) {
       const chatId = update.callback_query.message.chat.id;
-      const data = update.callback_query.data;
+      const data = update.callback_query.data || "";
+
+      if (data.startsWith("confirm_order:")) {
+        await handleConfirmOrder(update.callback_query);
+        return;
+      }
+
+      if (data.startsWith("cancel_order:")) {
+        await handleCancelOrder(update.callback_query);
+        return;
+      }
+
+      if (data.startsWith("payment_verified:")) {
+        await handleAdminPaymentDecision(update.callback_query, "payment_verified");
+        return;
+      }
+
+      if (data.startsWith("reject_payment:")) {
+        await handleAdminPaymentDecision(update.callback_query, "payment_rejected");
+        return;
+      }
 
       if (data === "facebook") {
+        await answerCallbackQuery(update.callback_query.id);
         await sendMessage(chatId, SERVICES.facebook, mainButtons());
       }
 
       if (data === "tiktok") {
+        await answerCallbackQuery(update.callback_query.id);
         await sendMessage(chatId, SERVICES.tiktok, mainButtons());
       }
     }
