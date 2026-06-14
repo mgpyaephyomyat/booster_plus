@@ -20,7 +20,7 @@ if (!BOT_TOKEN) {
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const VERSION = "booster-plus-v7-supabase-sessions";
+const VERSION = "booster-plus-v7.2-multi-link-collection";
 
 const SERVICE_PRICES = [
   {
@@ -84,7 +84,7 @@ const SERVICE_PRICES = [
 const SERVICE_BY_ID = Object.fromEntries(SERVICE_PRICES.map((service) => [service.id, service]));
 const BURMESE_WITH = "\u1014\u1032\u1037";
 
-const welcomeText = `မင်္ဂလာပါရှင့် 🙏
+const welcomeText = `မင်္ဂလာပါရှင့် 🙏
 Booster Plus မှ ကြိုဆိုပါတယ် 🚀
 
 ဘယ် Service လေးလိုချင်ပါသလဲ?`;
@@ -105,9 +105,9 @@ const SERVICES = {
 1K = 4,000 Ks
 
 📌 Note:
-Profile / Page / Post ကို Public ဖွင့်ထားပေးပါရှင့်။
+Profile / Page / Post ကို Public ဖွင့်ထားပေးပါရှင့်။
 Order တင်ပြီးနောက် 3 ရက်ကျော် ကြာနိုင်ပါတယ်။
-စိတ်အေးအေးထားပြီး စောင့်ပေးပါရှင့် 💙`,
+စိတ်အေးအေးထားပြီး စောင့်ပေးပါရှင့် 💙`,
 
   tiktok: `🎵 TikTok Services
 
@@ -121,9 +121,9 @@ Order တင်ပြီးနောက် 3 ရက်ကျော် ကြာ�
 1K = 5,000 Ks
 
 📌 Note:
-Account / Video ကို Public ဖွင့်ထားပေးပါရှင့်။
+Account / Video ကို Public ဖွင့်ထားပေးပါရှင့်။
 Order တင်ပြီးနောက် 3 ရက်ကျော် ကြာနိုင်ပါတယ်။
-စိတ်အေးအေးထားပြီး စောင့်ပေးပါရှင့် 💙`
+စိတ်အေးအေးထားပြီး စောင့်ပေးပါရှင့် 💙`
 };
 
 function mainButtons() {
@@ -131,6 +131,13 @@ function mainButtons() {
     [{ text: "📘 Facebook Services", callback_data: "facebook" }],
     [{ text: "🎵 TikTok Services", callback_data: "tiktok" }],
     [{ text: "📞 Contact Admin", url: "https://t.me/pyaephyomyat_lv999" }]
+  ];
+}
+
+function collectingLinksButtons() {
+  return [
+    [{ text: "✅ Link ပို့ပြီးပါပြီ", callback_data: "links_done" }],
+    ...mainButtons()
   ];
 }
 
@@ -302,6 +309,11 @@ function parseOrderItems(userText) {
   };
 }
 
+function extractExplicitLink(text) {
+  const match = text.match(/https?:\/\/[^\s]+/i);
+  return match ? match[0] : null;
+}
+
 function formatNumber(value) {
   return new Intl.NumberFormat("en-US").format(value);
 }
@@ -319,12 +331,35 @@ function formatQuantity(quantity) {
   return formatNumber(quantity);
 }
 
-function buildOrderSummary(items, serviceLink, phoneNumber) {
+function normalizeServiceLinks(session) {
+  if (Array.isArray(session.serviceLinks) && session.serviceLinks.length > 0) {
+    return session.serviceLinks;
+  }
+
+  if (session.serviceLink) {
+    return [session.serviceLink];
+  }
+
+  return [];
+}
+
+function formatServiceLinks(serviceLinks) {
+  if (!serviceLinks.length) return "-";
+
+  if (serviceLinks.length === 1) {
+    return serviceLinks[0];
+  }
+
+  return serviceLinks.map((link, index) => `${index + 1}. ${link}`).join("\n");
+}
+
+function buildOrderSummary(items, serviceLinks, phoneNumber) {
   const lines = items.map((item, index) => {
     const unitPrice = `${formatNumber(item.service.unitPrice)} Ks / ${item.service.unitLabel}`;
     return `${index + 1}. ${item.service.name} - ${formatQuantity(item.quantity)} (${unitPrice}) = ${formatNumber(item.price)} Ks`;
   });
   const total = items.reduce((sum, item) => sum + item.price, 0);
+  const linksText = formatServiceLinks(serviceLinks);
 
   return `Order Summary
 
@@ -332,8 +367,20 @@ ${lines.join("\n")}
 
 Total Price: ${formatNumber(total)} Ks
 
-Link: ${serviceLink}
+Links:
+${linksText}
 Phone number: ${phoneNumber}`;
+}
+
+function buildLinksCollectedMessage(serviceLinks) {
+  const linksList = serviceLinks.map((link, index) => `${index + 1}. ${link}`).join("\n");
+
+  return `✅ Link ${serviceLinks.length} လက်ခံပြီးပါပြီ။
+
+${linksList}
+
+နောက်ထပ် link ရှိရင် ပို့ပါ။
+ပို့ပြီးရင် "Link ပို့ပြီးပါပြီ" ကို နှိပ်ပါ။`;
 }
 
 function serviceLinkPrompt() {
@@ -458,7 +505,7 @@ function formatOrderItems(items) {
 }
 
 function paymentText(totalAmount) {
-  return `💳 ငွေလွှဲရန်
+  return `💳 Ngwe Lwāl Yan
 
 💰 Amount: ${formatNumber(totalAmount)} Ks
 
@@ -466,11 +513,27 @@ function paymentText(totalAmount) {
 📱 09775936384
 👤 Pyae Phyo Myat
 
-📸 ငွေလွှဲပြီး Screenshot ကို ဒီ chat ထဲ တိုက်ရိုက် Upload ပေးပါရှင့်။`;
+📸 Ngwe lwāl ppi Screenshot ko de chat htal tite yite Upload pay par shint.`;
+}
+
+function appendServiceLink(session, rawText) {
+  const link = extractExplicitLink(rawText) || rawText.trim();
+
+  if (!Array.isArray(session.serviceLinks)) {
+    session.serviceLinks = normalizeServiceLinks(session);
+  }
+
+  if (!session.serviceLinks.includes(link)) {
+    session.serviceLinks.push(link);
+  }
+
+  delete session.serviceLink;
+  return link;
 }
 
 async function saveConfirmedOrder(msg, session) {
   const user = msg.from;
+  const serviceLinks = normalizeServiceLinks(session);
   const order = {
     telegram_id: user.id,
     username: user.username || null,
@@ -478,7 +541,7 @@ async function saveConfirmedOrder(msg, session) {
     status: "waiting_payment",
     items: serializeOrderItems(session.items),
     total_amount: orderTotal(session.items),
-    service_link: session.serviceLink,
+    service_link: serviceLinks.join("\n"),
     phone_number: session.phoneNumber,
     payment_screenshot_file_id: null
   };
@@ -550,10 +613,20 @@ async function getWaitingPaymentOrder(telegramId) {
   }
 }
 
+function parseStoredServiceLinks(order) {
+  if (!order?.service_link) return [];
+
+  return order.service_link
+    .split("\n")
+    .map((link) => link.replace(/^\d+\.\s*/, "").trim())
+    .filter(Boolean);
+}
+
 function buildAdminPaymentCaption(order) {
   const customerName = order.first_name || "-";
   const username = order.username ? `@${order.username}` : "-";
   const services = formatOrderItems(order.items || []);
+  const serviceLinks = parseStoredServiceLinks(order);
 
   return `Payment Submitted
 
@@ -565,7 +638,8 @@ Ordered services:
 ${services}
 
 Total amount: ${formatNumber(order.total_amount || 0)} Ks
-Link: ${order.service_link || "-"}
+Links:
+${formatServiceLinks(serviceLinks)}
 Phone number: ${order.phone_number || "-"}`;
 }
 
@@ -608,9 +682,39 @@ async function handlePhoto(msg) {
     return sendMessage(chatId, "Payment screenshot could not be saved. Please try again or contact admin.", mainButtons());
   }
 
-  await sendMessage(chatId, `✅ Payment Screenshot လက်ခံရရှိပါပြီရှင့်။
+  await sendMessage(chatId, `✅ Payment Screenshot လက်ခံရရှိပါပြီရှင့်။
 Admin မှ စစ်ဆေးပြီး Order စတင်ပေးပါမည်။`, mainButtons());
   await notifyAdminPayment(submittedOrder);
+}
+
+async function handleLinksDone(callbackQuery) {
+  const chatId = callbackQuery.message.chat.id;
+  const userId = callbackQuery.from.id;
+  const session = await getCustomerSession(userId);
+
+  if (!session || session.stage !== "awaiting_link") {
+    await answerCallbackQuery(callbackQuery.id, "Session expired.");
+    return sendMessage(chatId, "Order session expired. Please send your order again.", mainButtons());
+  }
+
+  const serviceLinks = normalizeServiceLinks(session);
+
+  if (!serviceLinks.length) {
+    await answerCallbackQuery(callbackQuery.id, "Link မပို့ရသေးပါ။");
+    return sendMessage(chatId, serviceLinkPrompt(), collectingLinksButtons());
+  }
+
+  session.serviceLinks = serviceLinks;
+  session.stage = "awaiting_phone";
+  delete session.serviceLink;
+
+  if (!(await setCustomerSession(userId, session))) {
+    await answerCallbackQuery(callbackQuery.id, "Could not save session.");
+    return sendMessage(chatId, "Could not save your order session. Please try again.", mainButtons());
+  }
+
+  await answerCallbackQuery(callbackQuery.id);
+  return sendMessage(chatId, phonePrompt(), mainButtons());
 }
 
 async function handleConfirmOrder(callbackQuery) {
@@ -777,19 +881,39 @@ async function handleText(msg) {
 
   if (session?.stage === "awaiting_link") {
     if (!isLikelyServiceLink(rawText)) {
-      return sendMessage(chatId, serviceLinkPrompt(), mainButtons());
+      return sendMessage(chatId, serviceLinkPrompt(), collectingLinksButtons());
     }
 
-    session.serviceLink = rawText;
-    session.stage = "awaiting_phone";
+    appendServiceLink(session, rawText);
+
     if (!(await setCustomerSession(msg.from.id, session))) {
       return sendMessage(chatId, "Could not save your order session. Please try again.", mainButtons());
     }
 
-    return sendMessage(chatId, phonePrompt(), mainButtons());
+    return sendMessage(
+      chatId,
+      buildLinksCollectedMessage(session.serviceLinks),
+      collectingLinksButtons()
+    );
   }
 
   if (session?.stage === "awaiting_phone") {
+    if (isLikelyServiceLink(rawText)) {
+      appendServiceLink(session, rawText);
+      session.stage = "awaiting_link";
+      delete session.tempOrderId;
+
+      if (!(await setCustomerSession(msg.from.id, session))) {
+        return sendMessage(chatId, "Could not save your order session. Please try again.", mainButtons());
+      }
+
+      return sendMessage(
+        chatId,
+        `${buildLinksCollectedMessage(session.serviceLinks)}\n\nPhone number မပို့ရသေးပါ။ Link ပို့ပြီးမှ "Link ပို့ပြီးပါပြီ" ကို နှိပ်ပါ။`,
+        collectingLinksButtons()
+      );
+    }
+
     if (!isLikelyPhoneNumber(rawText)) {
       return sendMessage(chatId, phonePrompt(), mainButtons());
     }
@@ -803,12 +927,28 @@ async function handleText(msg) {
 
     return sendMessage(
       chatId,
-      buildOrderSummary(session.items, session.serviceLink, session.phoneNumber),
+      buildOrderSummary(session.items, normalizeServiceLinks(session), session.phoneNumber),
       orderActionButtons(session.tempOrderId)
     );
   }
 
   if (session?.stage === "awaiting_confirmation") {
+    if (isLikelyServiceLink(rawText)) {
+      appendServiceLink(session, rawText);
+      session.stage = "awaiting_link";
+      delete session.tempOrderId;
+
+      if (!(await setCustomerSession(msg.from.id, session))) {
+        return sendMessage(chatId, "Could not save your order session. Please try again.", mainButtons());
+      }
+
+      return sendMessage(
+        chatId,
+        `${buildLinksCollectedMessage(session.serviceLinks)}\n\nOrder summary ကို ပြန်ကြည့်ချင်ရင် link ပို့ပြီးမှ "Link ပို့ပြီးပါပြီ" ကို နှိပ်ပြီး phone number ထပ်ပို့ပါ။`,
+        collectingLinksButtons()
+      );
+    }
+
     return sendMessage(chatId, "Please confirm or cancel the order using the buttons.", orderActionButtons(session.tempOrderId));
   }
 
@@ -821,14 +961,15 @@ async function handleText(msg) {
   if (order.items.length > 0) {
     const savedSession = await setCustomerSession(msg.from.id, {
       stage: "awaiting_link",
-      items: order.items
+      items: order.items,
+      serviceLinks: []
     });
 
     if (!savedSession) {
       return sendMessage(chatId, "Could not save your order session. Please try again.", mainButtons());
     }
 
-    return sendMessage(chatId, serviceLinkPrompt(), mainButtons());
+    return sendMessage(chatId, serviceLinkPrompt(), collectingLinksButtons());
   }
 
   if (text.includes("facebook") || text.includes("fb") || text.includes("ဖေ့")) {
@@ -840,7 +981,7 @@ async function handleText(msg) {
   }
 
   if (isAdminRequest(text)) {
-    return sendMessage(chatId, "📞 Admin ကို ဆက်သွယ်ရန် အောက်က Contact Admin ခလုတ်ကို နှိပ်ပေးပါရှင့်။", mainButtons());
+    return sendMessage(chatId, "📞 Admin ကို ဆက်သွယ်ရန် အောက်က Contact Admin ခလုတ်ကို နှိပ်ပေးပါရှင့်။", mainButtons());
   }
 
   const intent = await askAI(text);
@@ -849,24 +990,24 @@ async function handleText(msg) {
   if (intent === "tiktok") return sendMessage(chatId, SERVICES.tiktok, mainButtons());
 
   if (intent === "public_note") {
-    return sendMessage(chatId, "📌 Profile / Page / Post / Video ကို Public ဖွင့်ထားမှ Order တင်လို့ရပါတယ်ရှင့်။", mainButtons());
+    return sendMessage(chatId, "📌 Profile / Page / Post / Video ကို Public ဖွင့်ထားမှ Order တင်လို့ရပါတယ်ရှင့်။", mainButtons());
   }
 
   if (intent === "waiting_note") {
-    return sendMessage(chatId, "⏳ Order processing time က 3 ရက်ကျော် ကြာနိုင်ပါတယ်ရှင့်။ စိတ်အေးအေးထားပြီး စောင့်ပေးပါနော် 💙", mainButtons());
+    return sendMessage(chatId, "⏳ Order processing time က 3 ရက်ကျော် ကြာနိုင်ပါတယ်ရှင့်။ စိတ်အေးအေးထားပြီး စောင့်ပေးပါနော် 💙", mainButtons());
   }
 
   if (intent === "admin") {
-    return sendMessage(chatId, "📞 Admin ကို ဆက်သွယ်ရန် အောက်က Contact Admin ခလုတ်ကို နှိပ်ပေးပါရှင့်။", mainButtons());
+    return sendMessage(chatId, "📞 Admin ကို ဆက်သွယ်ရန် အောက်က Contact Admin ခလုတ်ကို နှိပ်ပေးပါရှင့်။", mainButtons());
   }
 
   const waitingPaymentOrder = await getWaitingPaymentOrder(msg.from.id);
 
   if (waitingPaymentOrder) {
-    return sendMessage(chatId, "Payment proof အတွက် Screenshot photo ကို ဒီ chat ထဲ တိုက်ရိုက် Upload ပေးပါရှင့်။ Text message ကို payment proof အဖြစ် လက်မခံပါ။", mainButtons());
+    return sendMessage(chatId, "Payment proof အတွက် Screenshot photo ကို ဒီ chat ထဲ တိုက်ရိုက် Upload ပေးပါရှင့်။ Text message ကို payment proof အဖြစ် လက်မခံပါ။", mainButtons());
   }
 
-  return sendMessage(chatId, "နားမလည်သေးပါရှင့်။ Facebook Service လား TikTok Service လား ရွေးပေးပါနော် 💙", mainButtons());
+  return sendMessage(chatId, "နားမလည်သေးပါရှင့်။ Facebook Service လား TikTok Service လား ရွေးပေးပါနော် 💙", mainButtons());
 }
 
 app.post("/webhook", async (req, res) => {
@@ -887,6 +1028,11 @@ app.post("/webhook", async (req, res) => {
     if (update.callback_query) {
       const chatId = update.callback_query.message.chat.id;
       const data = update.callback_query.data || "";
+
+      if (data === "links_done") {
+        await handleLinksDone(update.callback_query);
+        return;
+      }
 
       if (data.startsWith("confirm_order:")) {
         await handleConfirmOrder(update.callback_query);
