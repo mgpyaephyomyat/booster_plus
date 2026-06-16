@@ -20,7 +20,7 @@ if (!BOT_TOKEN) {
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const VERSION = "booster-plus-v7.3-multi-order-parse";
+const VERSION = "booster-plus-v7.3.1-payment-burmese";
 
 const SERVICE_PRICES = [
   {
@@ -187,6 +187,10 @@ async function answerCallbackQuery(callbackQueryId, text = null) {
   try {
     await axios.post(`${TELEGRAM_API}/answerCallbackQuery`, payload);
   } catch (err) {
+    const description = err.response?.data?.description || "";
+    if (err.response?.data?.error_code === 400 && description.includes("query is too old")) {
+      return;
+    }
     console.error("Telegram answerCallbackQuery error:", err.response?.data || err.message);
   }
 }
@@ -541,15 +545,15 @@ function formatOrderItems(items) {
 }
 
 function paymentText(totalAmount) {
-  return `💳 Ngwe Lwāl Yan
+  return `💳 ငွေလွှဲရန်
 
-💰 Amount: ${formatNumber(totalAmount)} Ks
+💰 ပမာဏ: ${formatNumber(totalAmount)} Ks
 
 🏦 KBZPay
 📱 09775936384
 👤 Pyae Phyo Myat
 
-📸 Ngwe lwāl ppi Screenshot ko de chat htal tite yite Upload pay par shint.`;
+📸 ငွေလွှဲ Screenshot ကို ဒီ chat ထဲ တိုက်ရိုက် Upload ပေးပါရှင့်။`;
 }
 
 function appendServiceLink(session, rawText) {
@@ -773,7 +777,7 @@ async function handleConfirmOrder(callbackQuery) {
 
   await clearCustomerSession(userId);
   await answerCallbackQuery(callbackQuery.id, "Order confirmed.");
-  return sendMessage(chatId, paymentText(savedOrder.total_amount || 0), mainButtons());
+  return sendMessage(chatId, paymentText(savedOrder.total_amount || 0));
 }
 
 async function handleCancelOrder(callbackQuery) {
