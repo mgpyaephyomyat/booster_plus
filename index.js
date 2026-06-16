@@ -135,10 +135,7 @@ function mainButtons() {
 }
 
 function collectingLinksButtons() {
-  return [
-    [{ text: "✅ Link ပို့ပြီးပါပြီ", callback_data: "links_done" }],
-    ...mainButtons()
-  ];
+  return [[{ text: "✅ Link ပို့ပြီးပါပြီ", callback_data: "links_done" }]];
 }
 
 function orderActionButtons(orderId) {
@@ -388,7 +385,7 @@ function serviceLinkPrompt() {
 }
 
 function phonePrompt() {
-  return "Please send your phone number.";
+  return "ဖုန်းနံပါတ် ပို့ပေးပါရှင့်။";
 }
 
 function unclearOrderText() {
@@ -714,7 +711,7 @@ async function handleLinksDone(callbackQuery) {
   }
 
   await answerCallbackQuery(callbackQuery.id);
-  return sendMessage(chatId, phonePrompt(), mainButtons());
+  return sendMessage(chatId, phonePrompt());
 }
 
 async function handleConfirmOrder(callbackQuery) {
@@ -915,7 +912,7 @@ async function handleText(msg) {
     }
 
     if (!isLikelyPhoneNumber(rawText)) {
-      return sendMessage(chatId, phonePrompt(), mainButtons());
+      return sendMessage(chatId, phonePrompt());
     }
 
     session.phoneNumber = rawText;
