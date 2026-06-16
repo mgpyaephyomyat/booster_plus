@@ -20,7 +20,7 @@ if (!BOT_TOKEN) {
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const VERSION = "booster-plus-v7.2-multi-link-collection";
+const VERSION = "booster-plus-v7.3-multi-order-parse";
 
 const SERVICE_PRICES = [
   {
@@ -260,8 +260,47 @@ function calculatePrice(service, quantity) {
 }
 
 function splitOrderClauses(text) {
-  const connectorPattern = new RegExp(`\\s+and\\s+|\\s*${BURMESE_WITH}\\s*|\\s*[&+]\\s*|\\s*;\\s*`, "i");
-  return text.split(connectorPattern).map((part) => part.trim()).filter(Boolean);
+  const connectorPattern = new RegExp(
+    [
+      "\\s+and\\s+",
+      "\\s+then\\s+",
+      "\\s*[,，]\\s*",
+      "\\s*;\\s*",
+      "\\s*[&+]\\s*",
+      `\\s*${BURMESE_WITH}\\s*`,
+      "\\s*နဲ့\\s*",
+      "\\s*ပီးတော့\\s*",
+      "\\s*ပြီးတော့\\s*",
+      "\\s*ပြီးမှ\\s*"
+    ].join("|"),
+    "i"
+  );
+
+  const parts = text.split(connectorPattern).map((part) => part.trim()).filter(Boolean);
+  return parts.flatMap(splitMultiPlatformClause);
+}
+
+function splitMultiPlatformClause(clause) {
+  const platformPattern = /\b(facebook|face\s*book|fb|tiktok|tik\s*tok|tt)\b/gi;
+  const matches = [...clause.matchAll(platformPattern)];
+
+  if (matches.length <= 1) {
+    return [clause];
+  }
+
+  const segments = [];
+
+  for (let i = 0; i < matches.length; i++) {
+    const start = matches[i].index;
+    const end = i + 1 < matches.length ? matches[i + 1].index : clause.length;
+    const segment = clause.slice(start, end).trim();
+
+    if (segment) {
+      segments.push(segment);
+    }
+  }
+
+  return segments.length ? segments : [clause];
 }
 
 function parseOrderItems(userText) {
