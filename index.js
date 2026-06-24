@@ -541,6 +541,10 @@ function paymentText(totalAmount) {
 📱 09775936384
 👤 Pyae Phyo Myat
 
+🏦 Wave Pay
+📱 09775936384
+👤 Pyae Phyo Myat
+
 📸 ငွေလွှဲ Screenshot ကို ဒီ chat ထဲ တိုက်ရိုက် Upload ပေးပါရှင့်။`;
 }
 
