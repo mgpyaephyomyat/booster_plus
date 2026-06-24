@@ -56,14 +56,6 @@ const SERVICE_PRICES = [
     unitPrice: 4000
   },
   {
-    id: "tiktok_followers",
-    platform: "tiktok",
-    name: "TikTok Followers",
-    unitQuantity: 1000,
-    unitLabel: "1K",
-    unitPrice: 17000
-  },
-  {
     id: "tiktok_likes",
     platform: "tiktok",
     name: "TikTok Likes",
@@ -111,13 +103,10 @@ Order တင်ပြီးနောက် 3 ရက်ကျော် ကြာ�
 
   tiktok: `🎵 TikTok Services
 
-1️⃣ TikTok Followers
-1K = 17,000 Ks
-
-2️⃣ TikTok Likes
+1️⃣ TikTok Likes
 1K = 9,000 Ks
 
-3️⃣ TikTok Video Views
+2️⃣ TikTok Video Views
 1K = 5,000 Ks
 
 📌 Note:
@@ -234,7 +223,6 @@ function detectServiceId(text, platform) {
   }
 
   if (platform === "tiktok") {
-    if (hasFollowers) return "tiktok_followers";
     if (hasLikes) return "tiktok_likes";
     if (hasViews) return "tiktok_video_views";
   }
@@ -432,7 +420,7 @@ function phonePrompt() {
 }
 
 function unclearOrderText() {
-  return "Order message is unclear. Please choose the service and quantity again, for example: TikTok followers 1K and TikTok likes 2K.";
+  return "Order message is unclear. Please choose the service and quantity again, for example: TikTok likes 1K and TikTok views 2K.";
 }
 
 function sessionKeyFromUserId(userId) {
@@ -876,12 +864,11 @@ Facebook Followers 1K = 14000 Ks
 Facebook Post Like 100 = 2000 Ks
 Facebook Post Like Myanmar Names 100 = 4000 Ks
 Facebook Video Views 1K = 4000 Ks
-TikTok Followers 1K = 17000 Ks
 TikTok Likes 1K = 9000 Ks
 TikTok Video Views 1K = 5000 Ks
 
 FB/Facebook/follower/like/Myanmar name/view/page/post => facebook.
-TikTok/tt/tiktok like/follower/view => tiktok.
+TikTok/tt/tiktok like/view => tiktok.
 Private/public/profile lock => public_note.
 Waiting/how long/delay => waiting_note.
 Admin/contact/human => admin.
