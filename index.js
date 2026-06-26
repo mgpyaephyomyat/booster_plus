@@ -188,6 +188,10 @@ function normalizeOrderText(text) {
   return text
     .toLowerCase()
     .replace(/\u1012\u102e\u101c\u102d\u102f\u1019\u103b\u102d\u102f\u1038/g, " ")
+    .replace(/\u1019\u103c\u1014\u103a\u1019\u102c/g, " myanmar ")
+    .replace(/\u1014\u102c\u1019\u100a\u103a\u1014\u1032\u1037/g, " name ")
+    .replace(/\u1014\u102c\u1019\u100a\u103a/g, " name ")
+    .replace(/\u101b\u101a\u103a/g, " and ")
     .replace(/\u00a0/g, " ")
     .replace(/[()]/g, " ")
     .replace(/\s+/g, " ")
